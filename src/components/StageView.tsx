@@ -28,7 +28,7 @@ interface StageViewProps {
   onShowToast: (msg: string, icon?: string) => void;
   activeStreams: ActiveStream[];
   onCloseStream: (id: string) => void;
-  onAddTestStream: () => void;
+  onAddTestStream?: () => void;
   onOpenWebcamModal: () => void;
   webcamStream: MediaStream | null;
   currentUserName?: string;
@@ -230,17 +230,6 @@ export const StageView: React.FC<StageViewProps> = ({
             >
               <span className="material-symbols-outlined text-[18px]">aspect_ratio</span>
             </button>
-
-            {/* Botão de Adicionar Transmissão para Teste (+ Tela) */}
-            <button
-              onClick={onAddTestStream}
-              className="p-1.5 px-2.5 rounded-lg bg-[#1c211e]/80 text-[#bbcabf] hover:text-[#4edea3] hover:bg-[#262b29] border border-[#1f332a] text-xs flex items-center gap-1 transition-all cursor-pointer"
-              title="Adicionar transmissão para testar a grade de múltiplas telas"
-              type="button"
-            >
-              <span className="material-symbols-outlined text-[16px] text-[#4edea3]">add_to_queue</span>
-              <span className="hidden sm:inline text-[11px] font-medium">+ Tela</span>
-            </button>
           </div>
         </div>
 
@@ -260,15 +249,6 @@ export const StageView: React.FC<StageViewProps> = ({
                 >
                   <span className="material-symbols-outlined text-[18px]">screen_share</span>
                   <span>Compartilhar Tela ou Janela</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={onAddTestStream}
-                  className="px-4 py-3 rounded-xl bg-[#1c211e] hover:bg-[#262b29] text-[#dfe4e0] hover:text-[#4edea3] border border-[#1f332a] font-semibold text-xs flex items-center gap-2 transition-all cursor-pointer active:scale-95"
-                  title="Simular transmissão para testar a grade de telas"
-                >
-                  <span className="material-symbols-outlined text-[18px] text-[#4edea3]">add_to_queue</span>
-                  <span>Simular Transmissão</span>
                 </button>
               </div>
             </div>
