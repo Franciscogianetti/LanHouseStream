@@ -65,7 +65,7 @@ export const ScreenShareModal: React.FC<ScreenShareModalProps> = ({
             width: { max: selectedResolution === '1080p' ? 1920 : selectedResolution === '720p' ? 1280 : selectedResolution === '480p' ? 854 : 640 },
             height: { max: selectedResolution === '1080p' ? 1080 : selectedResolution === '720p' ? 720 : selectedResolution === '480p' ? 480 : 360 },
           },
-          audio: audioActive,
+          audio: false,
         });
 
         const track = stream.getVideoTracks()[0];
@@ -83,7 +83,7 @@ export const ScreenShareModal: React.FC<ScreenShareModalProps> = ({
           badge: `${selectedResolution} ${selectedFps}FPS`,
         };
 
-        onSelectSource(customSource, audioActive, volumeGain, stream);
+        onSelectSource(customSource, false, volumeGain, stream);
         setIsStarting(false);
         onClose();
         return;
@@ -115,7 +115,7 @@ export const ScreenShareModal: React.FC<ScreenShareModalProps> = ({
             width: { max: selectedResolution === '1080p' ? 1920 : selectedResolution === '720p' ? 1280 : selectedResolution === '480p' ? 854 : 640 },
             height: { max: selectedResolution === '1080p' ? 1080 : selectedResolution === '720p' ? 720 : selectedResolution === '480p' ? 480 : 360 },
           },
-          audio: audioActive,
+          audio: false,
         });
 
         const track = realStream.getVideoTracks()[0];

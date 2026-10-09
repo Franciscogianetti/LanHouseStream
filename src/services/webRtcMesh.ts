@@ -222,7 +222,10 @@ export class WebRtcMeshManager {
         this.pendingScreenCandidates.delete(streamerId);
       }
 
-      const answer = await pc.createAnswer();
+      const answer = await pc.createAnswer({
+        offerToReceiveVideo: true,
+        offerToReceiveAudio: false,
+      });
       await pc.setLocalDescription(answer);
 
       lanSyncClient.sendWebRtcSignal(streamerId, {
@@ -274,6 +277,16 @@ export class WebRtcMeshManager {
         type: 'REQUEST_STREAM',
       });
     }
+  }
+
+  /**
+   * Conecta com novo participante que acabou de entrar na sala
+   */
+  connectToNewPeer(participantId: string) {
+    if (this.localStream) {
+      this.sendScreenOffer(participantId);
+    }
+    this.connectToRoomPeers([participantId]);
   }
 
   /**

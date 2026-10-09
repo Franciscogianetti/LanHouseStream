@@ -27,8 +27,8 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
   const [hasAutoplayBlocked, setHasAutoplayBlocked] = useState<boolean>(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
 
-  // Inicia ou restaura a reprodução de vídeo WebRTC com tratamento inteligente de Autoplay do Chrome
-  const attemptPlay = useCallback(async (forceMuted = false) => {
+  // Inicia ou restaura a reprodução de vídeo WebRTC com muted, playsinline e autoplay imediatos
+  const attemptPlay = useCallback(async (forceMuted = true) => {
     const videoEl = videoRef.current;
     if (!videoEl || !stream.mediaStream) return;
 
@@ -36,20 +36,23 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
       videoEl.srcObject = stream.mediaStream;
     }
 
-    // Se for o próprio transmissor ou forçado mudo, muta sempre
+    // Por predefinição garante muted e playsInline para que o navegador sincronize imediatamente sem exigir gesto de áudio
     const shouldMute = isOwnStream || forceMuted || isAudioMuted;
     videoEl.muted = shouldMute;
+    videoEl.defaultMuted = shouldMute;
+    videoEl.playsInline = true;
 
     try {
       await videoEl.play();
       setIsVideoPlaying(true);
-      if (!forceMuted && !isOwnStream) {
+      if (!shouldMute) {
         setHasAutoplayBlocked(false);
       }
     } catch (err: any) {
-      console.warn('[StreamTile] Autoplay com áudio bloqueado pela política do Chrome. Ativando fallback mudo:', err?.message || err);
-      // Fallback garantido: o Google Chrome permite reprodução 100% das vezes se o vídeo for mutado
+      console.warn('[StreamTile] Tentando reproduzir com áudio falhou. Ativando fallback mudo obrigatório:', err?.message || err);
       videoEl.muted = true;
+      videoEl.defaultMuted = true;
+      videoEl.playsInline = true;
       setIsAudioMuted(true);
       setHasAutoplayBlocked(true);
       try {
@@ -65,12 +68,20 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
     const videoEl = videoRef.current;
     if (!videoEl || !stream.mediaStream) return;
 
-    attemptPlay(isOwnStream);
+    if (videoEl.srcObject !== stream.mediaStream) {
+      videoEl.srcObject = stream.mediaStream;
+    }
+    videoEl.muted = true;
+    videoEl.defaultMuted = true;
+    videoEl.playsInline = true;
+    videoEl.autoplay = true;
+
+    attemptPlay(true);
 
     // Escuta quando as faixas de vídeo começarem a fluir do WebRTC
     const tracks = stream.mediaStream.getTracks();
     const handleTrackActive = () => {
-      attemptPlay(isOwnStream);
+      attemptPlay(true);
     };
 
     tracks.forEach(track => {
@@ -84,7 +95,7 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
         track.removeEventListener('ended', handleTrackActive);
       });
     };
-  }, [stream.mediaStream, isOwnStream, attemptPlay]);
+  }, [stream.mediaStream, attemptPlay]);
 
   // Alternar áudio do stream (ativar som ou silenciar) com gesto direto do usuário
   const handleToggleAudio = (e?: React.MouseEvent) => {
@@ -218,18 +229,22 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
               ref={(el) => {
                 videoRef.current = el;
                 if (el && stream.mediaStream) {
+                  el.muted = isOwnStream || isAudioMuted;
+                  el.defaultMuted = true;
+                  el.playsInline = true;
+                  el.autoplay = true;
                   if (el.srcObject !== stream.mediaStream) {
                     el.srcObject = stream.mediaStream;
                   }
-                  el.muted = isOwnStream || isAudioMuted;
                   el.play().catch(() => {});
                 }
               }}
               autoPlay
               playsInline
               muted={isOwnStream || isAudioMuted}
-              onLoadedMetadata={() => attemptPlay(isOwnStream)}
-              onCanPlay={() => attemptPlay(isOwnStream)}
+              defaultMuted
+              onLoadedMetadata={() => attemptPlay(true)}
+              onCanPlay={() => attemptPlay(true)}
               className="w-full h-full object-contain bg-black [contain:content]"
             />
 

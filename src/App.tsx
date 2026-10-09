@@ -367,15 +367,16 @@ export default function App() {
       });
     });
 
-    // Inicia microfone para comunicação por voz com outros usuários na sala
-    initMicrophone().then(() => {
-      const otherIds = (participantsByRoom[channelToJoin] || [])
-        .filter(p => p.id !== user.id)
-        .map(p => p.id);
-      if (otherIds.length > 0) {
-        webRtcMesh.connectToRoomPeers(otherIds);
-      }
-    });
+    // Conecta imediatamente aos participantes da sala sem depender do microfone
+    const otherIds = (participantsByRoom[channelToJoin] || [])
+      .filter(p => p.id !== user.id)
+      .map(p => p.id);
+    if (otherIds.length > 0) {
+      webRtcMesh.connectToRoomPeers(otherIds);
+    }
+
+    // Inicia microfone para voz em segundo plano (se falhar ou for negado, não bloqueia nada)
+    initMicrophone().catch(() => null);
 
     // Notificação flutuante elegante que entra e sai sem floodar o chat
     soundEffects.playUserJoinSound();
@@ -935,7 +936,7 @@ export default function App() {
           width: { ideal: targetWidth, max: targetWidth },
           height: { ideal: targetHeight, max: targetHeight },
         } as any,
-        audio: true,
+        audio: false,
       });
 
       const track = stream.getVideoTracks()[0];
@@ -958,7 +959,7 @@ export default function App() {
         badge: `${currentPreset.quality.split(' ')[0]} ${targetFps}FPS`,
       };
 
-      handleSelectSource(customSource, true, 100, stream);
+      handleSelectSource(customSource, false, 0, stream);
     } catch (err) {
       // Cancelado no seletor nativo do Chrome pelo usuário
       console.log('Compartilhamento cancelado pelo usuário no navegador:', err);
@@ -1099,14 +1100,13 @@ export default function App() {
       });
       webRtcMesh.updateRoom(channel);
 
-      initMicrophone().then(() => {
-        const otherIds = (participantsByRoom[channel] || [])
-          .filter(p => p.id !== discordUser.id)
-          .map(p => p.id);
-        if (otherIds.length > 0) {
-          webRtcMesh.connectToRoomPeers(otherIds);
-        }
-      });
+      const otherIds = (participantsByRoom[channel] || [])
+        .filter(p => p.id !== discordUser.id)
+        .map(p => p.id);
+      if (otherIds.length > 0) {
+        webRtcMesh.connectToRoomPeers(otherIds);
+      }
+      initMicrophone().catch(() => null);
     }
 
     soundEffects.playUserJoinSound();
