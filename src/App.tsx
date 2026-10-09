@@ -155,6 +155,7 @@ export default function App() {
 
   const userMicStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
+  const localScreenStreamRef = useRef<MediaStream | null>(null);
 
   // Mapeia e monitora em tempo real os dispositivos de áudio, microfone e câmera ativos no PC
   const refreshSystemDevices = async () => {
@@ -469,10 +470,20 @@ export default function App() {
             next[rId] = serverStreams
               .filter(s => participantIds.has(s.participantId))
               .map(s => {
-                const isMine = discordUser && s.participantId === discordUser.id;
+                const isMine = Boolean(
+                  (discordUser && s.participantId === discordUser.id) ||
+                  s.id.includes('main-user') ||
+                  s.participantName?.includes('(Você)') ||
+                  s.participantId === 'user-1'
+                );
                 if (isMine) {
-                  const local = (prev[rId] || []).find(ls => ls.id === s.id);
-                  return local || s;
+                  const local = (prev[rId] || []).find(ls => ls.id === s.id || ls.participantId === s.participantId);
+                  const streamToUse = local?.mediaStream || localScreenStreamRef.current || webRtcMesh.getLocalStream() || null;
+                  return {
+                    ...s,
+                    mediaStream: streamToUse,
+                    participantName: `${effectiveUserName} (Você)`,
+                  };
                 }
                 const prevStream = (prev[rId] || []).find(ls => ls.id === s.id);
                 let cached = remoteStreamsRef.current.get(s.participantId) || prevStream?.mediaStream;
@@ -952,6 +963,8 @@ export default function App() {
         });
       }
 
+      localScreenStreamRef.current = stream;
+
       const track = stream.getVideoTracks()[0];
       const windowTitle = track.label || 'Janela / Tela do Windows';
 
@@ -1182,6 +1195,10 @@ export default function App() {
     const currentUserName = `${effectiveUserName} (Você)`;
     const currentUserAvatar = effectiveAvatar;
 
+    if (realStream) {
+      localScreenStreamRef.current = realStream;
+    }
+
     const streamObj: ActiveStream = {
       id: myStreamId,
       participantId: discordUser?.id || 'user-1',
@@ -1191,7 +1208,7 @@ export default function App() {
       type: source.category === 'apps' ? 'app' : 'screen',
       resolution: source.resolution,
       fps: source.fps,
-      mediaStream: realStream || null,
+      mediaStream: realStream || localScreenStreamRef.current || webRtcMesh.getLocalStream() || null,
       appIcon: source.icon,
     };
 
@@ -1236,8 +1253,9 @@ export default function App() {
       };
     });
 
-    const isMyStream = streamId === `stream-${discordUser?.id || 'main-user'}` || streamId === 'stream-main-user';
+    const isMyStream = streamId === `stream-${discordUser?.id || 'main-user'}` || streamId === 'stream-main-user' || streamId.includes('main-user');
     if (isMyStream) {
+      localScreenStreamRef.current = null;
       setIsStreaming(false);
       webRtcMesh.stopBroadcast();
       if (discordUser) {
@@ -1539,7 +1557,7 @@ export default function App() {
           unlockedRooms={unlockedRooms}
           onRequestPasswordRoom={roomId => setPasswordModalRoom(roomId)}
           onToggleUserSpeaking={handleToggleUserSpeaking}
-          currentUserId={discordUser?.id}
+          currentUserId={discordUser?.id || 'user-1'}
           isMuted={isMuted}
           onToggleMute={toggleMute}
           isDeafened={isDeafened}
@@ -1578,7 +1596,7 @@ export default function App() {
               onOpenWebcamModal={() => setIsWebcamModalOpen(true)}
               webcamStream={webcamStream}
               currentUserName={effectiveUserName}
-              currentUserId={discordUser?.id}
+              currentUserId={discordUser?.id || 'user-1'}
               onSimulateJoin={handleSimulateUserJoin}
               onSimulateLeave={handleSimulateUserLeave}
             />

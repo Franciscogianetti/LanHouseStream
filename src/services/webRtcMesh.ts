@@ -196,6 +196,10 @@ export class WebRtcMeshManager {
     this.registeredVideoElements.delete(peerId);
   }
 
+  getLocalStream(): MediaStream | null {
+    return this.localStream;
+  }
+
   /**
    * Inicia transmissão de tela local criando ou atualizando conexões para cada participante
    */

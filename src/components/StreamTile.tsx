@@ -21,20 +21,30 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
   currentUserId,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const isOwnStream = Boolean(currentUserId && stream.participantId === currentUserId);
+  const localStream = webRtcMesh.getLocalStream();
+  const isOwnStream = Boolean(
+    (currentUserId && (stream.participantId === currentUserId || stream.id.includes(currentUserId))) ||
+    stream.id.includes('main-user') ||
+    stream.participantName?.includes('(Você)') ||
+    (localStream && (stream.mediaStream === localStream || stream.id.includes('main-user')))
+  );
+
+  // Stream efetivo a reproduzir: se for o próprio emissor, utiliza o stream local capturado de imediato
+  const effectiveStream = isOwnStream ? (stream.mediaStream || localStream) : stream.mediaStream;
 
   // Por padrão o áudio do elemento de vídeo começa mutado para garantir Autoplay imediato sem tela preta
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(true);
   const [hasAutoplayBlocked, setHasAutoplayBlocked] = useState<boolean>(false);
-  const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(() => Boolean(isOwnStream));
 
   // Inicia ou restaura a reprodução de vídeo WebRTC com muted, playsinline e autoplay imediatos
   const attemptPlay = useCallback(async (forceMuted = true) => {
     const videoEl = videoRef.current;
-    if (!videoEl || !stream.mediaStream) return;
+    const streamToPlay = isOwnStream ? (effectiveStream || localStream) : effectiveStream;
+    if (!videoEl || !streamToPlay) return;
 
-    if (videoEl.srcObject !== stream.mediaStream) {
-      videoEl.srcObject = stream.mediaStream;
+    if (videoEl.srcObject !== streamToPlay) {
+      videoEl.srcObject = streamToPlay;
     }
 
     // Por predefinição garante muted e playsInline para que o navegador sincronize imediatamente sem exigir gesto de áudio
@@ -63,30 +73,55 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
         console.error('[StreamTile] Falha no fallback mudo:', innerErr);
       }
     }
-  }, [stream.mediaStream, isOwnStream, isAudioMuted]);
+  }, [effectiveStream, isOwnStream, isAudioMuted, localStream]);
 
   useEffect(() => {
-    webRtcMesh.registerVideoElement(stream.participantId, videoRef.current);
-
     const videoEl = videoRef.current;
-    if (videoEl && stream.mediaStream) {
-      if (videoEl.srcObject !== stream.mediaStream) {
-        videoEl.srcObject = stream.mediaStream;
+    if (!videoEl) return;
+
+    // 1. Exibição Local Direta:
+    // Se o usuário atual for o emissor, atribui imediatamente o stream local capturado à tag <video>
+    // sem aguardar eventos de rede WebRTC ou ontrack
+    if (isOwnStream) {
+      const streamToPlay = effectiveStream || localStream;
+      if (streamToPlay) {
+        if (videoEl.srcObject !== streamToPlay) {
+          videoEl.srcObject = streamToPlay;
+        }
+        videoEl.muted = true;
+        videoEl.defaultMuted = true;
+        videoEl.playsInline = true;
+        videoEl.play().catch((err) => console.warn('Preview local play warning:', err));
+        setIsVideoPlaying(true);
       }
-      videoEl.muted = isOwnStream || isAudioMuted;
+      return;
+    }
+
+    // 2. Fluxo para espectadores remotos: registra elemento para ontrack e aguarda quadros
+    webRtcMesh.registerVideoElement(stream.participantId, videoEl);
+
+    if (effectiveStream) {
+      if (videoEl.srcObject !== effectiveStream) {
+        videoEl.srcObject = effectiveStream;
+      }
+      videoEl.muted = isAudioMuted;
       videoEl.defaultMuted = true;
       videoEl.playsInline = true;
       videoEl.autoplay = true;
 
-      videoEl.play().catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
+      videoEl.play().then(() => {
+        setIsVideoPlaying(true);
+      }).catch((err) => console.warn('Erro ao reproduzir vídeo remoto:', err));
 
-      const tracks = stream.mediaStream.getTracks();
+      const tracks = effectiveStream.getTracks();
       const handleTrackActive = () => {
-        if (videoEl && stream.mediaStream) {
-          if (videoEl.srcObject !== stream.mediaStream) {
-            videoEl.srcObject = stream.mediaStream;
+        if (videoEl && effectiveStream) {
+          if (videoEl.srcObject !== effectiveStream) {
+            videoEl.srcObject = effectiveStream;
           }
-          videoEl.play().catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
+          videoEl.play().then(() => {
+            setIsVideoPlaying(true);
+          }).catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
         }
       };
 
@@ -107,7 +142,7 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
     return () => {
       webRtcMesh.unregisterVideoElement(stream.participantId);
     };
-  }, [stream.participantId, stream.mediaStream, isOwnStream, isAudioMuted]);
+  }, [stream.participantId, stream.mediaStream, effectiveStream, isOwnStream, isAudioMuted, localStream]);
 
   // Alternar áudio do stream (ativar som ou silenciar) com gesto direto do usuário
   const handleToggleAudio = (e?: React.MouseEvent) => {
@@ -172,9 +207,13 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
               <span className="text-xs font-bold text-[#dfe4e0] truncate drop-shadow-sm">
                 {stream.participantName}
               </span>
-              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-[#0a0f0d]/80 text-[#4edea3] font-mono text-[9px] font-bold border border-[#1f332a]">
+              <span className={`flex items-center gap-1 px-1.5 py-0.2 rounded font-mono text-[9px] font-bold border ${
+                isOwnStream
+                  ? 'bg-[#1f332a]/80 text-[#4edea3] border-[#274237]'
+                  : 'bg-[#0a0f0d]/80 text-[#4edea3] border-[#1f332a]'
+              }`}>
                 <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3] animate-pulse"></span>
-                AO VIVO
+                {isOwnStream ? 'SUA TELA' : 'AO VIVO'}
               </span>
             </div>
             <span className="text-[10px] font-mono text-[#bbcabf] truncate">
@@ -238,19 +277,55 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
         <video
           ref={(el) => {
             videoRef.current = el;
-            webRtcMesh.registerVideoElement(stream.participantId, el);
-            if (el && stream.mediaStream) {
-              if (el.srcObject !== stream.mediaStream) {
-                el.srcObject = stream.mediaStream;
+            if (isOwnStream) {
+              const streamToPlay = effectiveStream || localStream;
+              if (el && streamToPlay) {
+                if (el.srcObject !== streamToPlay) {
+                  el.srcObject = streamToPlay;
+                }
+                el.muted = true;
+                el.defaultMuted = true;
+                el.playsInline = true;
+                el.play().catch(() => {});
+                setIsVideoPlaying(true);
               }
-              el.play().catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
+            } else {
+              webRtcMesh.registerVideoElement(stream.participantId, el);
+              if (el && effectiveStream) {
+                if (el.srcObject !== effectiveStream) {
+                  el.srcObject = effectiveStream;
+                }
+                el.play().then(() => {
+                  setIsVideoPlaying(true);
+                }).catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
+              }
             }
           }}
           autoPlay
           playsInline
-          muted
+          muted={isOwnStream || isAudioMuted}
+          onPlaying={() => setIsVideoPlaying(true)}
+          onLoadedData={() => setIsVideoPlaying(true)}
           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         />
+
+        {/* Loading Overlay: Sincronizando vídeo ao vivo WebRTC...
+            Apenas para espectadores remotos enquanto os dados de vídeo não chegarem.
+            O transmissor (isOwnStream) NUNCA vê este estado de carregamento. */}
+        {!isOwnStream && (!effectiveStream || !isVideoPlaying) && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 text-center select-none bg-gradient-to-br from-[#0c120f]/95 via-[#101713]/95 to-[#18221b]/95 backdrop-blur-sm">
+            <div className="w-14 h-14 rounded-2xl bg-[#1c211e] border border-[#274237] flex items-center justify-center text-[#4edea3] mb-3 shadow-[0_0_25px_rgba(78,222,163,0.2)] animate-pulse">
+              <span className="material-symbols-outlined text-[28px]">sensors</span>
+            </div>
+            <div className="text-xs sm:text-sm font-bold text-[#dfe4e0]">
+              Transmissão de {stream.participantName}
+            </div>
+            <div className="text-[11px] text-[#4edea3] font-mono mt-1.5 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-[#4edea3] animate-ping"></span>
+              <span>Sincronizando vídeo ao vivo WebRTC...</span>
+            </div>
+          </div>
+        )}
 
         {/* Aviso Flutuante se o Chrome tiver pausado o áudio por Autoplay */}
         {!isOwnStream && hasAutoplayBlocked && (
@@ -272,7 +347,7 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
         <span className="text-[#bbcabf]">{stream.resolution || '1920 x 1080'} • {stream.fps || '60 FPS'}</span>
         <span className="text-[#4edea3] flex items-center gap-1">
           <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3]"></span>
-          <span>WebRTC P2P</span>
+          <span>{isOwnStream ? 'Captura Local' : 'WebRTC P2P'}</span>
         </span>
       </div>
     </div>
