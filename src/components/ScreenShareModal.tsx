@@ -58,15 +58,19 @@ export const ScreenShareModal: React.FC<ScreenShareModalProps> = ({
     if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
       try {
         setIsStarting(true);
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            displaySurface: activeCategory === 'apps' ? 'window' : 'monitor',
-            frameRate: { max: selectedFps },
-            width: { max: selectedResolution === '1080p' ? 1920 : selectedResolution === '720p' ? 1280 : selectedResolution === '480p' ? 854 : 640 },
-            height: { max: selectedResolution === '1080p' ? 1080 : selectedResolution === '720p' ? 720 : selectedResolution === '480p' ? 480 : 360 },
-          },
-          audio: false,
-        });
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true,
+          });
+        } catch (audioErr: any) {
+          if (audioErr?.name === 'NotAllowedError') throw audioErr;
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false,
+          });
+        }
 
         const track = stream.getVideoTracks()[0];
         const windowTitle = track.label || (activeCategory === 'apps' ? 'Janela Selecionada do PC' : 'Tela do Sistema');
@@ -83,7 +87,7 @@ export const ScreenShareModal: React.FC<ScreenShareModalProps> = ({
           badge: `${selectedResolution} ${selectedFps}FPS`,
         };
 
-        onSelectSource(customSource, false, volumeGain, stream);
+        onSelectSource(customSource, stream.getAudioTracks().length > 0, volumeGain, stream);
         setIsStarting(false);
         onClose();
         return;
@@ -108,15 +112,18 @@ export const ScreenShareModal: React.FC<ScreenShareModalProps> = ({
 
     if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
       try {
-        realStream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            displaySurface: activeCategory === 'apps' ? 'window' : 'monitor',
-            frameRate: { max: selectedFps },
-            width: { max: selectedResolution === '1080p' ? 1920 : selectedResolution === '720p' ? 1280 : selectedResolution === '480p' ? 854 : 640 },
-            height: { max: selectedResolution === '1080p' ? 1080 : selectedResolution === '720p' ? 720 : selectedResolution === '480p' ? 480 : 360 },
-          },
-          audio: false,
-        });
+        try {
+          realStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true,
+          });
+        } catch (audioErr: any) {
+          if (audioErr?.name === 'NotAllowedError') throw audioErr;
+          realStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false,
+          });
+        }
 
         const track = realStream.getVideoTracks()[0];
         if (track && track.label) {

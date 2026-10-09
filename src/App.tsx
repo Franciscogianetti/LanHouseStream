@@ -929,15 +929,23 @@ export default function App() {
       const targetFps = currentPreset.fps || 60;
       const resLabel = is1080 ? '1920 x 1080' : is720 ? '1280 x 720' : is480 ? '854 x 480' : '640 x 360';
 
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          cursor: 'always',
-          frameRate: { ideal: targetFps, max: targetFps },
-          width: { ideal: targetWidth, max: targetWidth },
-          height: { ideal: targetHeight, max: targetHeight },
-        } as any,
-        audio: false,
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true,
+        });
+      } catch (err: any) {
+        if (err?.name === 'NotAllowedError') {
+          console.log('Compartilhamento cancelado pelo usuário no navegador:', err);
+          return;
+        }
+        // Não interrompe o fluxo caso o sistema não tenha áudio de captura disponível
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: false,
+        });
+      }
 
       const track = stream.getVideoTracks()[0];
       const windowTitle = track.label || 'Janela / Tela do Windows';
@@ -959,7 +967,7 @@ export default function App() {
         badge: `${currentPreset.quality.split(' ')[0]} ${targetFps}FPS`,
       };
 
-      handleSelectSource(customSource, false, 0, stream);
+      handleSelectSource(customSource, stream.getAudioTracks().length > 0, 100, stream);
     } catch (err) {
       // Cancelado no seletor nativo do Chrome pelo usuário
       console.log('Compartilhamento cancelado pelo usuário no navegador:', err);

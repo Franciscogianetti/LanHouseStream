@@ -118,6 +118,30 @@ export class WebRtcMeshManager {
     }
   }
 
+  private registeredVideoElements = new Map<string, HTMLVideoElement>();
+
+  /**
+   * Vincula diretamente o elemento <video> do leitor recetor para anexação instantânea no ontrack
+   */
+  registerVideoElement(peerId: string, el: HTMLVideoElement | null) {
+    if (el) {
+      this.registeredVideoElements.set(peerId, el);
+      const stream = this.remoteStreams.get(peerId);
+      if (stream) {
+        if (el.srcObject !== stream) {
+          el.srcObject = stream;
+        }
+        el.play().catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
+      }
+    } else {
+      this.registeredVideoElements.delete(peerId);
+    }
+  }
+
+  unregisterVideoElement(peerId: string) {
+    this.registeredVideoElements.delete(peerId);
+  }
+
   /**
    * Envia oferta de transmissão de tela dedicada para um espectador específico
    */
@@ -134,8 +158,8 @@ export class WebRtcMeshManager {
       const pc = new RTCPeerConnection(this.rtcConfig);
       this.screenSenders.set(viewerId, pc);
 
-      // Anexa todas as faixas da transmissão de tela (vídeo e áudio)
-      this.localStream.getTracks().forEach(track => {
+      // Regista de imediato todas as faixas do stream no RTCPeerConnection antes de criar/enviar a oferta (Offer)
+      this.localStream.getTracks().forEach((track) => {
         pc.addTrack(track, this.localStream!);
       });
 
@@ -153,11 +177,7 @@ export class WebRtcMeshManager {
         }
       };
 
-      const offer = await pc.createOffer({
-        offerToReceiveVideo: false,
-        offerToReceiveAudio: false,
-      });
-
+      const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
       lanSyncClient.sendWebRtcSignal(viewerId, {
@@ -182,20 +202,23 @@ export class WebRtcMeshManager {
       const pc = new RTCPeerConnection(this.rtcConfig);
       this.screenReceivers.set(streamerId, pc);
 
-      // Quando a faixa de vídeo chegar, vincula imediatamente ao reprodutor
+      // Associação do stream no evento ontrack
       pc.ontrack = (event) => {
-        const stream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
-        this.remoteStreams.set(streamerId, stream);
+        const [remoteStream] = event.streams;
+        const stream = remoteStream || (event.track ? new MediaStream([event.track]) : null);
+        if (stream) {
+          this.remoteStreams.set(streamerId, stream);
 
-        if (this.onRemoteStreamCallback) {
-          this.onRemoteStreamCallback(streamerId, stream);
-        }
+          const videoEl = this.registeredVideoElements.get(streamerId);
+          if (videoEl && remoteStream) {
+            videoEl.srcObject = remoteStream;
+            videoEl.play().catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
+          }
 
-        event.track.onunmute = () => {
           if (this.onRemoteStreamCallback) {
             this.onRemoteStreamCallback(streamerId, stream);
           }
-        };
+        }
       };
 
       pc.onicecandidate = (event) => {
@@ -213,19 +236,18 @@ export class WebRtcMeshManager {
 
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
-      // Despeja candidatos pendentes
+      // Despeja candidatos ICE pendentes no recetor
       const pending = this.pendingScreenCandidates.get(streamerId);
       if (pending && pending.length > 0) {
         for (const cand of pending) {
-          try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
+          try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (err) {
+            console.warn('[WebRTC] Erro ao aplicar candidato ICE no recetor:', err);
+          }
         }
         this.pendingScreenCandidates.delete(streamerId);
       }
 
-      const answer = await pc.createAnswer({
-        offerToReceiveVideo: true,
-        offerToReceiveAudio: false,
-      });
+      const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
       lanSyncClient.sendWebRtcSignal(streamerId, {
@@ -245,6 +267,17 @@ export class WebRtcMeshManager {
       const pc = this.screenSenders.get(viewerId);
       if (pc && pc.signalingState === 'have-local-offer') {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
+
+        // Despeja candidatos ICE pendentes no transmissor
+        const pending = this.pendingScreenCandidates.get(viewerId);
+        if (pending && pending.length > 0) {
+          for (const cand of pending) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (err) {
+              console.warn('[WebRTC] Erro ao aplicar candidato ICE no transmissor:', err);
+            }
+          }
+          this.pendingScreenCandidates.delete(viewerId);
+        }
       }
     } catch (err) {
       console.warn(`[GoLive] Falha ao aplicar resposta de tela de ${viewerId}:`, err);
@@ -252,14 +285,16 @@ export class WebRtcMeshManager {
   }
 
   /**
-   * Processa candidato ICE da transmissão de tela
+   * Processa candidato ICE da transmissão de tela em ambas as pontas
    */
   private async handleStreamCandidate(peerId: string, candidate: RTCIceCandidateInit) {
     try {
       if (!candidate || !candidate.candidate) return;
       const pc = this.screenReceivers.get(peerId) || this.screenSenders.get(peerId);
       if (pc && pc.remoteDescription && pc.remoteDescription.type) {
-        try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+        try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) {
+          console.warn('[WebRTC] Erro ao adicionar candidato ICE imediato:', err);
+        }
       } else {
         const queue = this.pendingScreenCandidates.get(peerId) || [];
         queue.push(candidate);

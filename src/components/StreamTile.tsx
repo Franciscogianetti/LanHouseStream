@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { ActiveStream } from '../types/stream';
 import { AvatarImage } from './AvatarImage';
+import { webRtcMesh } from '../services/webRtcMesh';
 
 interface StreamTileProps {
   stream: ActiveStream;
@@ -65,37 +66,48 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
   }, [stream.mediaStream, isOwnStream, isAudioMuted]);
 
   useEffect(() => {
+    webRtcMesh.registerVideoElement(stream.participantId, videoRef.current);
+
     const videoEl = videoRef.current;
-    if (!videoEl || !stream.mediaStream) return;
+    if (videoEl && stream.mediaStream) {
+      if (videoEl.srcObject !== stream.mediaStream) {
+        videoEl.srcObject = stream.mediaStream;
+      }
+      videoEl.muted = isOwnStream || isAudioMuted;
+      videoEl.defaultMuted = true;
+      videoEl.playsInline = true;
+      videoEl.autoplay = true;
 
-    if (videoEl.srcObject !== stream.mediaStream) {
-      videoEl.srcObject = stream.mediaStream;
+      videoEl.play().catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
+
+      const tracks = stream.mediaStream.getTracks();
+      const handleTrackActive = () => {
+        if (videoEl && stream.mediaStream) {
+          if (videoEl.srcObject !== stream.mediaStream) {
+            videoEl.srcObject = stream.mediaStream;
+          }
+          videoEl.play().catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
+        }
+      };
+
+      tracks.forEach(track => {
+        track.addEventListener('unmute', handleTrackActive);
+        track.addEventListener('ended', handleTrackActive);
+      });
+
+      return () => {
+        tracks.forEach(track => {
+          track.removeEventListener('unmute', handleTrackActive);
+          track.removeEventListener('ended', handleTrackActive);
+        });
+        webRtcMesh.unregisterVideoElement(stream.participantId);
+      };
     }
-    videoEl.muted = true;
-    videoEl.defaultMuted = true;
-    videoEl.playsInline = true;
-    videoEl.autoplay = true;
-
-    attemptPlay(true);
-
-    // Escuta quando as faixas de vídeo começarem a fluir do WebRTC
-    const tracks = stream.mediaStream.getTracks();
-    const handleTrackActive = () => {
-      attemptPlay(true);
-    };
-
-    tracks.forEach(track => {
-      track.addEventListener('unmute', handleTrackActive);
-      track.addEventListener('ended', handleTrackActive);
-    });
 
     return () => {
-      tracks.forEach(track => {
-        track.removeEventListener('unmute', handleTrackActive);
-        track.removeEventListener('ended', handleTrackActive);
-      });
+      webRtcMesh.unregisterVideoElement(stream.participantId);
     };
-  }, [stream.mediaStream, attemptPlay]);
+  }, [stream.participantId, stream.mediaStream, isOwnStream, isAudioMuted]);
 
   // Alternar áudio do stream (ativar som ou silenciar) com gesto direto do usuário
   const handleToggleAudio = (e?: React.MouseEvent) => {
@@ -223,57 +235,34 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
         onClick={handleVideoAreaClick}
         className="relative w-full flex-1 min-h-0 flex items-center justify-center bg-[#0a0f0d] overflow-hidden cursor-pointer"
       >
-        {stream.mediaStream ? (
-          <>
-            <video
-              ref={(el) => {
-                videoRef.current = el;
-                if (el && stream.mediaStream) {
-                  el.muted = isOwnStream || isAudioMuted;
-                  el.defaultMuted = true;
-                  el.playsInline = true;
-                  el.autoplay = true;
-                  if (el.srcObject !== stream.mediaStream) {
-                    el.srcObject = stream.mediaStream;
-                  }
-                  el.play().catch(() => {});
-                }
-              }}
-              autoPlay
-              playsInline
-              muted={isOwnStream || isAudioMuted}
-              defaultMuted
-              onLoadedMetadata={() => attemptPlay(true)}
-              onCanPlay={() => attemptPlay(true)}
-              className="w-full h-full object-contain bg-black [contain:content]"
-            />
+        <video
+          ref={(el) => {
+            videoRef.current = el;
+            webRtcMesh.registerVideoElement(stream.participantId, el);
+            if (el && stream.mediaStream) {
+              if (el.srcObject !== stream.mediaStream) {
+                el.srcObject = stream.mediaStream;
+              }
+              el.play().catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
+            }
+          }}
+          autoPlay
+          playsInline
+          muted
+          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+        />
 
-            {/* Aviso Flutuante Elegante se o Chrome tiver pausado o áudio por Autoplay */}
-            {!isOwnStream && hasAutoplayBlocked && (
-              <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
-                <button
-                  type="button"
-                  onClick={handleToggleAudio}
-                  className="px-3.5 py-1.5 rounded-xl bg-[#1c211e]/90 hover:bg-[#262b29] text-[#4edea3] border border-[#274237] shadow-[0_4px_20px_rgba(0,0,0,0.6)] backdrop-blur-md flex items-center gap-2 text-xs font-semibold transition-all hover:scale-105 cursor-pointer animate-pulse"
-                >
-                  <span className="material-symbols-outlined text-[18px]">volume_off</span>
-                  <span>Clique aqui para ativar o áudio</span>
-                </button>
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center select-none bg-gradient-to-br from-[#0c120f] via-[#101713] to-[#18221b]">
-            <div className="w-16 h-16 rounded-2xl bg-[#1c211e] border border-[#274237] flex items-center justify-center text-[#4edea3] mb-3 shadow-[0_0_30px_rgba(78,222,163,0.25)] animate-pulse">
-              <span className="material-symbols-outlined text-[32px]">sensors</span>
-            </div>
-            <div className="text-xs sm:text-sm font-bold text-[#dfe4e0]">
-              Transmissão de {stream.participantName}
-            </div>
-            <div className="text-[11px] text-[#4edea3] font-mono mt-1 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-[#4edea3] animate-ping"></span>
-              <span>Sincronizando vídeo ao vivo WebRTC...</span>
-            </div>
+        {/* Aviso Flutuante se o Chrome tiver pausado o áudio por Autoplay */}
+        {!isOwnStream && hasAutoplayBlocked && (
+          <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
+            <button
+              type="button"
+              onClick={handleToggleAudio}
+              className="px-3.5 py-1.5 rounded-xl bg-[#1c211e]/90 hover:bg-[#262b29] text-[#4edea3] border border-[#274237] shadow-[0_4px_20px_rgba(0,0,0,0.6)] backdrop-blur-md flex items-center gap-2 text-xs font-semibold transition-all hover:scale-105 cursor-pointer animate-pulse"
+            >
+              <span className="material-symbols-outlined text-[18px]">volume_off</span>
+              <span>Clique aqui para ativar o áudio</span>
+            </button>
           </div>
         )}
       </div>
