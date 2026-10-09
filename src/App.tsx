@@ -354,11 +354,13 @@ export default function App() {
         Object.keys(next).forEach(rId => {
           const roomStreams = next[rId] || [];
           next[rId] = roomStreams.map(s => {
+            const isMe = discordUser ? s.participantId === discordUser.id : false;
+            if (isMe) return s;
             const matchesId = s.participantId === remoteUserId ||
               (remoteUserId && (String(s.participantId).includes(String(remoteUserId)) || String(remoteUserId).includes(String(s.participantId))));
             const matchesName = s.participantName && remoteUserId && s.participantName.toLowerCase().includes(String(remoteUserId).toLowerCase());
-            const fallbackSingleStream = roomStreams.length === 1 && s.participantId !== user.id && !s.mediaStream;
-            return (matchesId || matchesName || fallbackSingleStream) ? { ...s, mediaStream: remoteStream } : s;
+            const fallbackRemote = !isMe;
+            return (matchesId || matchesName || fallbackRemote) ? { ...s, mediaStream: remoteStream } : s;
           });
         });
         return next;
@@ -471,7 +473,19 @@ export default function App() {
                   const local = (prev[rId] || []).find(ls => ls.id === s.id);
                   return local || s;
                 }
-                const cached = remoteStreamsRef.current.get(s.participantId);
+                const prevStream = (prev[rId] || []).find(ls => ls.id === s.id);
+                let cached = remoteStreamsRef.current.get(s.participantId) || prevStream?.mediaStream;
+                if (!cached) {
+                  for (const [key, ms] of remoteStreamsRef.current.entries()) {
+                    if (key === s.participantId || s.participantId.includes(key) || key.includes(s.participantId)) {
+                      cached = ms;
+                      break;
+                    }
+                  }
+                  if (!cached && remoteStreamsRef.current.size === 1) {
+                    cached = Array.from(remoteStreamsRef.current.values())[0];
+                  }
+                }
                 if (!cached) {
                   webRtcMesh.requestStreamFrom(s.participantId);
                 }

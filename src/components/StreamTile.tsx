@@ -215,7 +215,16 @@ export const StreamTile: React.FC<StreamTileProps> = React.memo(({
         {stream.mediaStream ? (
           <>
             <video
-              ref={videoRef}
+              ref={(el) => {
+                videoRef.current = el;
+                if (el && stream.mediaStream) {
+                  if (el.srcObject !== stream.mediaStream) {
+                    el.srcObject = stream.mediaStream;
+                  }
+                  el.muted = isOwnStream || isAudioMuted;
+                  el.play().catch(() => {});
+                }
+              }}
               autoPlay
               playsInline
               muted={isOwnStream || isAudioMuted}

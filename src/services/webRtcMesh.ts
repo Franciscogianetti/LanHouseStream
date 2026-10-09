@@ -384,17 +384,17 @@ export class WebRtcMeshManager {
       let pc = this.peerConnections.get(targetUserId);
       if (pc) {
         if (pc.signalingState === 'have-local-offer') {
-          // Já existe uma oferta enviada aguardando resposta
-          return;
+          try {
+            await pc.setLocalDescription({ type: 'rollback' });
+          } catch {}
         }
-        if (pc.signalingState !== 'stable') {
-          // Aguarda estabilizar a sinalização antes de renegociar
+        if (pc.signalingState !== 'stable' && pc.signalingState !== 'closed') {
           setTimeout(() => {
             const currentPc = this.peerConnections.get(targetUserId);
             if (currentPc && currentPc.signalingState === 'stable') {
               this.createOfferFor(targetUserId);
             }
-          }, 400);
+          }, 300);
           return;
         }
       }
@@ -412,26 +412,11 @@ export class WebRtcMeshManager {
         offerToReceiveAudio: true,
       });
 
-      if (pc.signalingState !== 'stable') {
-        return;
-      }
-
-      let finalOffer: RTCSessionDescriptionInit = offer;
-      try {
-        const sdpVP8 = this.preferVP8(offer.sdp || '');
-        finalOffer = {
-          type: offer.type,
-          sdp: sdpVP8,
-        };
-        await pc.setLocalDescription(finalOffer);
-      } catch {
-        await pc.setLocalDescription(offer);
-        finalOffer = offer;
-      }
+      await pc.setLocalDescription(offer);
 
       lanSyncClient.sendWebRtcSignal(targetUserId, {
         type: 'OFFER',
-        offer: finalOffer,
+        offer,
       });
     } catch (err) {
       console.warn(`[WebRTC] Falha ao criar oferta para ${targetUserId}:`, err);
@@ -441,15 +426,7 @@ export class WebRtcMeshManager {
   private async handleOffer(fromUserId: string, offer: RTCSessionDescriptionInit) {
     try {
       let pc = this.peerConnections.get(fromUserId);
-      const isOfferCollision = pc && pc.signalingState !== 'stable';
-      const isPolite = this.currentUserId < fromUserId;
-
-      if (isOfferCollision && pc) {
-        if (!isPolite) {
-          // Impolite peer mantém sua própria oferta; o polite peer aceitará
-          return;
-        }
-        // Polite peer: desfaz a oferta local pendente para receber a oferta remota
+      if (pc && pc.signalingState !== 'stable') {
         try {
           await pc.setLocalDescription({ type: 'rollback' });
         } catch {
@@ -468,40 +445,14 @@ export class WebRtcMeshManager {
       this.setPreferredCodecs(pc);
 
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
-
-      // Despeja candidatos ICE acumulados antes do remoteDescription
       await this.drainPendingCandidates(fromUserId, pc);
 
-      if (pc.signalingState !== 'have-remote-offer') {
-        return;
-      }
-
       const answer = await pc.createAnswer();
-      if (pc.signalingState !== 'have-remote-offer') {
-        return;
-      }
-
-      let finalAnswer: RTCSessionDescriptionInit = answer;
-      try {
-        const sdpVP8 = this.preferVP8(answer.sdp || '');
-        finalAnswer = {
-          type: answer.type,
-          sdp: sdpVP8,
-        };
-        await pc.setLocalDescription(finalAnswer);
-      } catch {
-        try {
-          await pc.setLocalDescription(answer);
-          finalAnswer = answer;
-        } catch (e: any) {
-          if (e?.name === 'InvalidStateError') return;
-          throw e;
-        }
-      }
+      await pc.setLocalDescription(answer);
 
       lanSyncClient.sendWebRtcSignal(fromUserId, {
         type: 'ANSWER',
-        answer: finalAnswer,
+        answer,
       });
     } catch (err) {
       console.warn(`[WebRTC] Falha ao responder oferta de ${fromUserId}:`, err);
