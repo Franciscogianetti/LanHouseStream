@@ -12,7 +12,7 @@ import {
 } from './data/mockData';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
-import { LAN_ROOMS, STORAGE_DISCORD_USER_KEY } from './constants/lanRooms';
+import { LAN_ROOMS, STORAGE_DISCORD_USER_KEY, STORAGE_IS_IN_ROOM_KEY } from './constants/lanRooms';
 import { StageView } from './components/StageView';
 import { WebcamModal } from './components/WebcamModal';
 import { DisconnectModal } from './components/DisconnectModal';
@@ -144,7 +144,9 @@ export default function App() {
 
   const [isConnected, setIsConnected] = useState<boolean>(() => {
     try {
-      return Boolean(localStorage.getItem(STORAGE_DISCORD_USER_KEY));
+      const inRoom = localStorage.getItem(STORAGE_IS_IN_ROOM_KEY) === 'true';
+      const hasUser = Boolean(localStorage.getItem(STORAGE_DISCORD_USER_KEY));
+      return inRoom && hasUser;
     } catch {
       return false;
     }
@@ -303,6 +305,7 @@ export default function App() {
     const channelToJoin = selectedChannel || currentChannel || '#lan-house-transmissao-sala-1';
     try {
       localStorage.setItem('lanhouse_current_channel', channelToJoin);
+      localStorage.setItem(STORAGE_IS_IN_ROOM_KEY, 'true');
     } catch {}
     if (channelToJoin === '#lan-house-transmissao-sala-1') {
       setUnlockedRooms(prev => new Set(prev).add(channelToJoin));
@@ -372,10 +375,15 @@ export default function App() {
     showToast(`${displayName} entrou na ${roomName}`, 'login');
   };
 
-  // Restaura sessão automaticamente após recarregar a página (F5)
+  // Restaura sessão automaticamente após recarregar a página (F5) APENAS se o usuário estava dentro de uma sala
   useEffect(() => {
-    if (discordUser) {
-      handleDiscordLogin(discordUser, currentChannel);
+    try {
+      const wasInRoom = localStorage.getItem(STORAGE_IS_IN_ROOM_KEY) === 'true';
+      if (discordUser && wasInRoom) {
+        handleDiscordLogin(discordUser, currentChannel);
+      }
+    } catch {
+      // Ignora erro
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -965,6 +973,7 @@ export default function App() {
 
     try {
       localStorage.removeItem('lanhouse_current_channel');
+      localStorage.removeItem(STORAGE_IS_IN_ROOM_KEY);
     } catch {}
 
     if (userMicStreamRef.current) {
@@ -1007,6 +1016,7 @@ export default function App() {
     setIsConnected(true);
     try {
       localStorage.setItem('lanhouse_current_channel', channel);
+      localStorage.setItem(STORAGE_IS_IN_ROOM_KEY, 'true');
     } catch {}
 
     const newRoom = LAN_ROOMS.find(r => r.id === channel);

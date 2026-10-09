@@ -32,3 +32,4 @@ export const ROOM_OPTIONS = [
 ];
 
 export const STORAGE_DISCORD_USER_KEY = 'lanhouse_discord_user';
+export const STORAGE_IS_IN_ROOM_KEY = 'lanhouse_is_in_room';

@@ -7,7 +7,7 @@ export interface DiscordUser {
   avatar: string;
 }
 
-import { ROOM_OPTIONS, STORAGE_DISCORD_USER_KEY } from '../constants/lanRooms';
+import { ROOM_OPTIONS, STORAGE_DISCORD_USER_KEY, STORAGE_IS_IN_ROOM_KEY } from '../constants/lanRooms';
 
 interface DiscordAuthModalProps {
   onSuccessLogin: (user: DiscordUser, selectedChannel?: string) => void;
@@ -257,6 +257,7 @@ export const DiscordAuthModal: React.FC<DiscordAuthModalProps> = ({ onSuccessLog
   const handleSwitchAccount = () => {
     try {
       localStorage.removeItem(STORAGE_DISCORD_USER_KEY);
+      localStorage.removeItem(STORAGE_IS_IN_ROOM_KEY);
     } catch {}
     setStep('prompt');
   };
