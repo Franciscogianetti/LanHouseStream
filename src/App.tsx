@@ -757,8 +757,8 @@ export default function App() {
     }));
   };
 
-  // Atualização em tempo real da qualidade e resolução da transmissão ativa
-  const handleSelectPreset = (preset: StreamPreset) => {
+  // Atualização em tempo real da qualidade e resolução da transmissão ativa (Sem derrubar a conexão)
+  const handleSelectPreset = async (preset: StreamPreset) => {
     setCurrentPreset(preset);
 
     const is1080 = preset.quality.includes('1080p');
@@ -771,22 +771,27 @@ export default function App() {
     const targetFps = preset.fps || 60;
     const resLabel = is1080 ? '1920 x 1080' : is720 ? '1280 x 720' : is480 ? '854 x 480' : '640 x 360';
 
+    // 1. Troca Dinâmica de Resolução (Sem derrubar a conexão):
+    // Utilize track.applyConstraints() diretamente na faixa de vídeo ativa para alterar resolução e FPS sem interromper o fluxo
+    await webRtcMesh.applyVideoConstraints(targetWidth, targetHeight, targetFps);
+
     // Atualiza imediatamente na transmissão ativa do usuário (metadados e faixa WebRTC)
     setActiveStreamsByRoom(prev => {
       const roomStreams = prev[currentChannel] || [];
+      const myId = discordUser?.id || 'main-user';
       return {
         ...prev,
         [currentChannel]: roomStreams.map(s => {
-          if (s.id === 'stream-main-user') {
-            // Tenta aplicar restrições dinâmicas na faixa de vídeo real sem interromper a transmissão
+          const isMine = s.participantId === myId || s.id.includes(myId) || s.id === 'stream-main-user';
+          if (isMine) {
             if (s.mediaStream) {
               const videoTrack = s.mediaStream.getVideoTracks()[0];
               if (videoTrack && videoTrack.applyConstraints) {
                 videoTrack.applyConstraints({
-                  width: { ideal: targetWidth, max: targetWidth },
-                  height: { ideal: targetHeight, max: targetHeight },
-                  frameRate: { ideal: targetFps, max: targetFps },
-                } as any).catch(err => {
+                  width: { ideal: targetWidth },
+                  height: { ideal: targetHeight },
+                  frameRate: { ideal: targetFps },
+                }).catch(err => {
                   console.log('applyConstraints ajustado pelo navegador:', err);
                 });
               }

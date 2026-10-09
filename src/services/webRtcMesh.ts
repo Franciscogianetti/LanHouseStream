@@ -9,12 +9,13 @@
 import { lanSyncClient } from './lanSyncClient';
 
 export class WebRtcMeshManager {
-  // Transmissão de Tela local e remota (GoLive)
+  // Transmissão de Tela local e remota (GoLive Multi-Stream com Negociação Perfeita)
   private localStream: MediaStream | null = null;
-  private screenSenders: Map<string, RTCPeerConnection> = new Map(); // viewerId -> pc
-  private screenReceivers: Map<string, RTCPeerConnection> = new Map(); // streamerId -> pc
+  private screenConnections: Map<string, RTCPeerConnection> = new Map(); // peerId -> RTCPeerConnection
+  private makingOfferMap: Map<string, boolean> = new Map();
   private pendingScreenCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
   private remoteStreams: Map<string, MediaStream> = new Map(); // streamerId -> MediaStream
+  private registeredVideoElements = new Map<string, HTMLVideoElement>();
 
   // Comunicação por Voz (Áudio Mesh)
   private voiceStream: MediaStream | null = null;
@@ -105,20 +106,73 @@ export class WebRtcMeshManager {
   // =========================================================================
 
   /**
-   * Inicia transmissão de tela local criando conexões dedicadas para cada espectador
+   * Obtém ou inicializa a conexão WebRTC dedicada para um par, com negociação perfeita
    */
-  async startBroadcast(stream: MediaStream, otherUserIds: string[]) {
-    this.localStream = stream;
-
-    // Envia oferta direta para todos os participantes atualmente na sala
-    for (const viewerId of otherUserIds) {
-      if (viewerId && viewerId !== this.currentUserId) {
-        await this.sendScreenOffer(viewerId);
-      }
+  private getOrCreateScreenConnection(peerId: string): RTCPeerConnection {
+    let pc = this.screenConnections.get(peerId);
+    if (pc && pc.signalingState !== 'closed') {
+      return pc;
     }
-  }
 
-  private registeredVideoElements = new Map<string, HTMLVideoElement>();
+    pc = new RTCPeerConnection(this.rtcConfig);
+    this.screenConnections.set(peerId, pc);
+
+    // 2. Trata o evento onnegotiationneeded para renegociar a conexão automaticamente
+    pc.onnegotiationneeded = async () => {
+      try {
+        this.makingOfferMap.set(peerId, true);
+        const offer = await pc.createOffer();
+        if (pc.signalingState !== 'stable') return;
+        await pc.setLocalDescription(offer);
+        lanSyncClient.sendWebRtcSignal(peerId, {
+          type: 'STREAM_OFFER',
+          offer: pc.localDescription,
+        });
+      } catch (err) {
+        console.error('Erro na renegociação:', err);
+      } finally {
+        this.makingOfferMap.set(peerId, false);
+      }
+    };
+
+    // Envia candidatos ICE para o par remoto
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        lanSyncClient.sendWebRtcSignal(peerId, {
+          type: 'STREAM_CANDIDATE',
+          candidate: event.candidate.toJSON ? event.candidate.toJSON() : {
+            candidate: event.candidate.candidate,
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex,
+          },
+        });
+      }
+    };
+
+    // No receptor ('ontrack'), gerencia múltiplos fluxos sem sobrescrever o vídeo já em exibição
+    pc.ontrack = (event) => {
+      const [remoteStream] = event.streams;
+      const stream = remoteStream || (event.track ? new MediaStream([event.track]) : null);
+      if (stream) {
+        this.remoteStreams.set(peerId, stream);
+
+        // Vincula diretamente ao elemento <video> do usuário correspondente
+        const videoEl = this.registeredVideoElements.get(peerId);
+        if (videoEl && remoteStream) {
+          if (videoEl.srcObject !== remoteStream) {
+            videoEl.srcObject = remoteStream;
+          }
+          videoEl.play().catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
+        }
+
+        if (this.onRemoteStreamCallback) {
+          this.onRemoteStreamCallback(peerId, stream);
+        }
+      }
+    };
+
+    return pc;
+  }
 
   /**
    * Vincula diretamente o elemento <video> do leitor recetor para anexação instantânea no ontrack
@@ -143,144 +197,127 @@ export class WebRtcMeshManager {
   }
 
   /**
-   * Envia oferta de transmissão de tela dedicada para um espectador específico
+   * Inicia transmissão de tela local criando ou atualizando conexões para cada participante
    */
-  async sendScreenOffer(viewerId: string) {
-    if (!this.localStream || !viewerId || viewerId === this.currentUserId) return;
+  async startBroadcast(stream: MediaStream, otherUserIds: string[]) {
+    this.localStream = stream;
 
-    try {
-      // Fecha conexão anterior se já existia para recriar um canal 100% limpo
-      const oldPc = this.screenSenders.get(viewerId);
-      if (oldPc) {
-        try { oldPc.close(); } catch {}
+    for (const viewerId of otherUserIds) {
+      if (viewerId && viewerId !== this.currentUserId) {
+        await this.addStreamToPeer(viewerId, stream);
       }
-
-      const pc = new RTCPeerConnection(this.rtcConfig);
-      this.screenSenders.set(viewerId, pc);
-
-      // Regista de imediato todas as faixas do stream no RTCPeerConnection antes de criar/enviar a oferta (Offer)
-      this.localStream.getTracks().forEach((track) => {
-        pc.addTrack(track, this.localStream!);
-      });
-
-      // Envia candidatos ICE para o espectador
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          lanSyncClient.sendWebRtcSignal(viewerId, {
-            type: 'STREAM_CANDIDATE',
-            candidate: event.candidate.toJSON ? event.candidate.toJSON() : {
-              candidate: event.candidate.candidate,
-              sdpMid: event.candidate.sdpMid,
-              sdpMLineIndex: event.candidate.sdpMLineIndex,
-            },
-          });
-        }
-      };
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      lanSyncClient.sendWebRtcSignal(viewerId, {
-        type: 'STREAM_OFFER',
-        offer,
-      });
-    } catch (err) {
-      console.warn(`[GoLive] Falha ao enviar oferta de tela para ${viewerId}:`, err);
     }
   }
 
   /**
-   * Espectador recebe a oferta de tela e configura o receptor de vídeo dedicado
+   * Adiciona ou substitui faixas do stream no par especificado
    */
-  private async handleStreamOffer(streamerId: string, offer: RTCSessionDescriptionInit) {
+  async addStreamToPeer(peerId: string, stream: MediaStream) {
+    if (!peerId || peerId === this.currentUserId) return;
+    const pc = this.getOrCreateScreenConnection(peerId);
+
+    const currentSenders = pc.getSenders();
+    stream.getTracks().forEach((track) => {
+      const existingSender = currentSenders.find(s => s.track && s.track.kind === track.kind);
+      if (existingSender) {
+        existingSender.replaceTrack(track).catch(() => {});
+      } else {
+        pc.addTrack(track, stream);
+      }
+    });
+
+    if (pc.signalingState === 'stable') {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        lanSyncClient.sendWebRtcSignal(peerId, {
+          type: 'STREAM_OFFER',
+          offer: pc.localDescription,
+        });
+      } catch (err) {
+        console.warn(`[WebRTC] Erro ao enviar oferta para ${peerId}:`, err);
+      }
+    }
+  }
+
+  /**
+   * Envia oferta de transmissão de tela dedicada para um espectador específico
+   */
+  async sendScreenOffer(viewerId: string) {
+    if (!this.localStream || !viewerId || viewerId === this.currentUserId) return;
+    await this.addStreamToPeer(viewerId, this.localStream);
+  }
+
+  /**
+   * Espectador recebe a oferta com tratamento de colisão (Perfect Negotiation / Glare handling)
+   */
+  private async handleStreamOffer(fromUserId: string, offer: RTCSessionDescriptionInit) {
     try {
-      const oldPc = this.screenReceivers.get(streamerId);
-      if (oldPc) {
-        try { oldPc.close(); } catch {}
+      const pc = this.getOrCreateScreenConnection(fromUserId);
+      const isPolite = this.currentUserId < fromUserId;
+      const isMakingOffer = this.makingOfferMap.get(fromUserId) || false;
+
+      // Colisão de ofertas (ambos transmitindo simultaneamente)
+      const offerCollision = (offer.type === 'offer') &&
+        (isMakingOffer || pc.signalingState !== 'stable');
+
+      if (offerCollision && !isPolite) {
+        console.log(`[WebRTC] Colisão detectada com ${fromUserId}: impolite ignorando oferta concorrente`);
+        return;
       }
 
-      const pc = new RTCPeerConnection(this.rtcConfig);
-      this.screenReceivers.set(streamerId, pc);
-
-      // Associação do stream no evento ontrack
-      pc.ontrack = (event) => {
-        const [remoteStream] = event.streams;
-        const stream = remoteStream || (event.track ? new MediaStream([event.track]) : null);
-        if (stream) {
-          this.remoteStreams.set(streamerId, stream);
-
-          const videoEl = this.registeredVideoElements.get(streamerId);
-          if (videoEl && remoteStream) {
-            videoEl.srcObject = remoteStream;
-            videoEl.play().catch((err) => console.warn('Erro ao reproduzir vídeo:', err));
-          }
-
-          if (this.onRemoteStreamCallback) {
-            this.onRemoteStreamCallback(streamerId, stream);
-          }
-        }
-      };
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          lanSyncClient.sendWebRtcSignal(streamerId, {
-            type: 'STREAM_CANDIDATE',
-            candidate: event.candidate.toJSON ? event.candidate.toJSON() : {
-              candidate: event.candidate.candidate,
-              sdpMid: event.candidate.sdpMid,
-              sdpMLineIndex: event.candidate.sdpMLineIndex,
-            },
-          });
-        }
-      };
+      if (offerCollision && isPolite) {
+        console.log(`[WebRTC] Colisão detectada com ${fromUserId}: polite fazendo rollback para aceitar oferta`);
+        await pc.setRemoteDescription({ type: 'rollback' });
+      }
 
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
       // Despeja candidatos ICE pendentes no recetor
-      const pending = this.pendingScreenCandidates.get(streamerId);
+      const pending = this.pendingScreenCandidates.get(fromUserId);
       if (pending && pending.length > 0) {
         for (const cand of pending) {
           try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (err) {
             console.warn('[WebRTC] Erro ao aplicar candidato ICE no recetor:', err);
           }
         }
-        this.pendingScreenCandidates.delete(streamerId);
+        this.pendingScreenCandidates.delete(fromUserId);
       }
 
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
-      lanSyncClient.sendWebRtcSignal(streamerId, {
+      lanSyncClient.sendWebRtcSignal(fromUserId, {
         type: 'STREAM_ANSWER',
-        answer,
+        answer: pc.localDescription,
       });
     } catch (err) {
-      console.warn(`[GoLive] Falha ao processar oferta de tela de ${streamerId}:`, err);
+      console.warn(`[WebRTC] Erro ao processar oferta de tela de ${fromUserId}:`, err);
     }
   }
 
   /**
    * Transmissor recebe a resposta do espectador
    */
-  private async handleStreamAnswer(viewerId: string, answer: RTCSessionDescriptionInit) {
+  private async handleStreamAnswer(fromUserId: string, answer: RTCSessionDescriptionInit) {
     try {
-      const pc = this.screenSenders.get(viewerId);
+      const pc = this.screenConnections.get(fromUserId);
       if (pc && pc.signalingState === 'have-local-offer') {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
 
         // Despeja candidatos ICE pendentes no transmissor
-        const pending = this.pendingScreenCandidates.get(viewerId);
+        const pending = this.pendingScreenCandidates.get(fromUserId);
         if (pending && pending.length > 0) {
           for (const cand of pending) {
             try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (err) {
               console.warn('[WebRTC] Erro ao aplicar candidato ICE no transmissor:', err);
             }
           }
-          this.pendingScreenCandidates.delete(viewerId);
+          this.pendingScreenCandidates.delete(fromUserId);
         }
       }
     } catch (err) {
-      console.warn(`[GoLive] Falha ao aplicar resposta de tela de ${viewerId}:`, err);
+      console.warn(`[WebRTC] Erro ao aplicar resposta de tela de ${fromUserId}:`, err);
     }
   }
 
@@ -290,7 +327,7 @@ export class WebRtcMeshManager {
   private async handleStreamCandidate(peerId: string, candidate: RTCIceCandidateInit) {
     try {
       if (!candidate || !candidate.candidate) return;
-      const pc = this.screenReceivers.get(peerId) || this.screenSenders.get(peerId);
+      const pc = this.screenConnections.get(peerId);
       if (pc && pc.remoteDescription && pc.remoteDescription.type) {
         try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) {
           console.warn('[WebRTC] Erro ao adicionar candidato ICE imediato:', err);
@@ -301,6 +338,47 @@ export class WebRtcMeshManager {
         this.pendingScreenCandidates.set(peerId, queue);
       }
     } catch {}
+  }
+
+  /**
+   * 1. Troca Dinâmica de Resolução (Sem derrubar a conexão):
+   * Aplica constraints diretamente na faixa de vídeo ativa sem interromper o fluxo
+   */
+  async applyVideoConstraints(targetWidth: number, targetHeight: number, targetFps: number) {
+    if (this.localStream) {
+      const videoTrack = this.localStream.getVideoTracks()[0];
+      if (videoTrack && videoTrack.applyConstraints) {
+        try {
+          await videoTrack.applyConstraints({
+            width: { ideal: targetWidth },
+            height: { ideal: targetHeight },
+            frameRate: { ideal: targetFps },
+          });
+          console.log(`[WebRTC] Constraints aplicadas com sucesso na faixa ativa: ${targetWidth}x${targetHeight} @ ${targetFps}FPS`);
+        } catch (err) {
+          console.warn('[WebRTC] Falha ao aplicar constraints no track ativo:', err);
+        }
+      }
+    }
+  }
+
+  /**
+   * Caso crie um novo MediaStream ao mudar a qualidade, faz a troca usando replaceTrack()
+   */
+  async replaceVideoTrack(newVideoTrack: MediaStreamTrack) {
+    for (const pc of this.screenConnections.values()) {
+      if (pc.signalingState !== 'closed') {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) {
+          try {
+            await sender.replaceTrack(newVideoTrack);
+            console.log('[WebRTC] replaceTrack executado com sucesso no sender de vídeo');
+          } catch (err) {
+            console.warn('[WebRTC] Erro no replaceTrack:', err);
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -319,7 +397,7 @@ export class WebRtcMeshManager {
    */
   connectToNewPeer(participantId: string) {
     if (this.localStream) {
-      this.sendScreenOffer(participantId);
+      this.addStreamToPeer(participantId, this.localStream);
     }
     this.connectToRoomPeers([participantId]);
   }
@@ -335,10 +413,19 @@ export class WebRtcMeshManager {
       this.localStream = null;
     }
 
-    this.screenSenders.forEach(pc => {
-      try { pc.close(); } catch {}
+    // Remove as faixas de tela de todos os senders ativos sem encerrar as conexões
+    this.screenConnections.forEach(pc => {
+      if (pc.signalingState !== 'closed') {
+        pc.getSenders().forEach(sender => {
+          if (sender.track) {
+            try {
+              sender.track.stop();
+              pc.removeTrack(sender);
+            } catch {}
+          }
+        });
+      }
     });
-    this.screenSenders.clear();
   }
 
   // =========================================================================
