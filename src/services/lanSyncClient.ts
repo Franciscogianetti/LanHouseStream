@@ -238,7 +238,7 @@ class LanSyncClient {
     this.send({
       type: 'WEBRTC_SIGNAL',
       targetUserId,
-      fromUserId: this.currentUserId,
+      fromUserId: this.currentUserId || this.currentParticipant?.id || this.currentParticipant?.name,
       signal,
     });
   }

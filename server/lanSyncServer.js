@@ -96,15 +96,28 @@ export function setupLanSyncServer(httpServer) {
 
   function sendToUser(targetUserId, payload) {
     const raw = JSON.stringify(payload);
+    const targetStr = String(targetUserId || '').trim().toLowerCase();
+    let delivered = 0;
     for (const client of wss.clients) {
-      if (client.readyState === WebSocket.OPEN && client.userId === targetUserId) {
-        try {
-          client.send(raw);
-        } catch (e) {
-          console.error('[LanSync] Erro ao enviar sinal P2P:', e);
+      if (client.readyState === WebSocket.OPEN) {
+        const clientUserId = String(client.userId || '').trim().toLowerCase();
+        const clientUserName = String(client.userName || '').trim().toLowerCase();
+        if (
+          clientUserId === targetStr ||
+          clientUserName === targetStr ||
+          (clientUserId && targetStr && (clientUserId.includes(targetStr) || targetStr.includes(clientUserId))) ||
+          (clientUserName && targetStr && (clientUserName.includes(targetStr) || targetStr.includes(clientUserName)))
+        ) {
+          try {
+            client.send(raw);
+            delivered++;
+          } catch (e) {
+            console.error('[LanSync] Erro ao enviar sinal P2P:', e);
+          }
         }
       }
     }
+    return delivered;
   }
 
   // Remove um usuário e todas as suas transmissões ativas de uma sala específica
@@ -357,13 +370,26 @@ export function setupLanSyncServer(httpServer) {
 
           case 'WEBRTC_SIGNAL': {
             const { targetUserId, signal, fromUserId } = data;
-            const senderId = fromUserId || ws.userId;
+            const senderId = fromUserId || ws.userId || ws.userName;
             if (targetUserId && senderId) {
-              sendToUser(targetUserId, {
+              const delivered = sendToUser(targetUserId, {
                 type: 'WEBRTC_SIGNAL',
                 fromUserId: senderId,
                 signal,
               });
+              if (delivered === 0 && ws.currentRoomId && signal && signal.type === 'REQUEST_STREAM') {
+                for (const client of wss.clients) {
+                  if (client.readyState === WebSocket.OPEN && client !== ws && client.currentRoomId === ws.currentRoomId) {
+                    try {
+                      client.send(JSON.stringify({
+                        type: 'WEBRTC_SIGNAL',
+                        fromUserId: senderId,
+                        signal,
+                      }));
+                    } catch {}
+                  }
+                }
+              }
             }
             break;
           }

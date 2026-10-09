@@ -25,7 +25,10 @@ export class WebRtcMeshManager {
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun.services.mozilla.com' },
+      { urls: 'stun:openrelay.metered.ca:80' },
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
     ],
     iceCandidatePoolSize: 10,
   };
@@ -413,17 +416,22 @@ export class WebRtcMeshManager {
         return;
       }
 
-      const sdpVP8 = this.preferVP8(offer.sdp || '');
-      const modifiedOffer = {
-        type: offer.type,
-        sdp: sdpVP8,
-      };
-
-      await pc.setLocalDescription(modifiedOffer);
+      let finalOffer: RTCSessionDescriptionInit = offer;
+      try {
+        const sdpVP8 = this.preferVP8(offer.sdp || '');
+        finalOffer = {
+          type: offer.type,
+          sdp: sdpVP8,
+        };
+        await pc.setLocalDescription(finalOffer);
+      } catch {
+        await pc.setLocalDescription(offer);
+        finalOffer = offer;
+      }
 
       lanSyncClient.sendWebRtcSignal(targetUserId, {
         type: 'OFFER',
-        offer: modifiedOffer,
+        offer: finalOffer,
       });
     } catch (err) {
       console.warn(`[WebRTC] Falha ao criar oferta para ${targetUserId}:`, err);
@@ -473,22 +481,27 @@ export class WebRtcMeshManager {
         return;
       }
 
-      const sdpVP8 = this.preferVP8(answer.sdp || '');
-      const modifiedAnswer = {
-        type: answer.type,
-        sdp: sdpVP8,
-      };
-
+      let finalAnswer: RTCSessionDescriptionInit = answer;
       try {
-        await pc.setLocalDescription(modifiedAnswer);
-      } catch (e: any) {
-        if (e?.name === 'InvalidStateError') return;
-        throw e;
+        const sdpVP8 = this.preferVP8(answer.sdp || '');
+        finalAnswer = {
+          type: answer.type,
+          sdp: sdpVP8,
+        };
+        await pc.setLocalDescription(finalAnswer);
+      } catch {
+        try {
+          await pc.setLocalDescription(answer);
+          finalAnswer = answer;
+        } catch (e: any) {
+          if (e?.name === 'InvalidStateError') return;
+          throw e;
+        }
       }
 
       lanSyncClient.sendWebRtcSignal(fromUserId, {
         type: 'ANSWER',
-        answer: modifiedAnswer,
+        answer: finalAnswer,
       });
     } catch (err) {
       console.warn(`[WebRTC] Falha ao responder oferta de ${fromUserId}:`, err);

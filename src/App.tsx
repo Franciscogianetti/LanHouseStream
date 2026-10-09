@@ -352,9 +352,14 @@ export default function App() {
       setActiveStreamsByRoom(prev => {
         const next = { ...prev };
         Object.keys(next).forEach(rId => {
-          next[rId] = (next[rId] || []).map(s =>
-            s.participantId === remoteUserId ? { ...s, mediaStream: remoteStream } : s
-          );
+          const roomStreams = next[rId] || [];
+          next[rId] = roomStreams.map(s => {
+            const matchesId = s.participantId === remoteUserId ||
+              (remoteUserId && (String(s.participantId).includes(String(remoteUserId)) || String(remoteUserId).includes(String(s.participantId))));
+            const matchesName = s.participantName && remoteUserId && s.participantName.toLowerCase().includes(String(remoteUserId).toLowerCase());
+            const fallbackSingleStream = roomStreams.length === 1 && s.participantId !== user.id && !s.mediaStream;
+            return (matchesId || matchesName || fallbackSingleStream) ? { ...s, mediaStream: remoteStream } : s;
+          });
         });
         return next;
       });
@@ -597,13 +602,33 @@ export default function App() {
       const { roomId, stream } = data;
       if (!stream || (discordUser && stream.participantId === discordUser.id)) return;
 
-      const cachedStream = remoteStreamsRef.current.get(stream.participantId);
+      let cachedStream = remoteStreamsRef.current.get(stream.participantId);
+      if (!cachedStream) {
+        for (const [key, ms] of remoteStreamsRef.current.entries()) {
+          if (
+            key === stream.participantId ||
+            (stream.participantId && (key.includes(stream.participantId) || stream.participantId.includes(key))) ||
+            (stream.participantName && key.toLowerCase().includes(stream.participantName.toLowerCase()))
+          ) {
+            cachedStream = ms;
+            break;
+          }
+        }
+      }
+
       const streamWithMedia = {
         ...stream,
         mediaStream: cachedStream || stream.mediaStream || null,
       };
 
       if (!cachedStream) {
+        // Dispara solicitação imediata de retransmissão WebRTC sem espera
+        webRtcMesh.requestStreamFrom(stream.participantId);
+        setTimeout(() => {
+          if (!remoteStreamsRef.current.get(stream.participantId)) {
+            webRtcMesh.requestStreamFrom(stream.participantId);
+          }
+        }, 500);
         setTimeout(() => {
           if (!remoteStreamsRef.current.get(stream.participantId)) {
             webRtcMesh.requestStreamFrom(stream.participantId);
