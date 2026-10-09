@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR" class="dark" style="background-color: #0a0f0d; color: #dfe4e0;">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lan House Stream - Transmissão de Tela e Comunicação em Tempo Real</title>
+    <meta name="description" content="Lan House Stream - Plataforma de transmissão de tela, streaming de alta fidelidade e comunicação em tempo real com baixa latência." />
+    <meta property="og:title" content="Lan House Stream - Transmissão de Tela e Comunicação em Tempo Real" />
+    <meta property="og:description" content="Lan House Stream - Plataforma de transmissão de tela, streaming de alta fidelidade e comunicação em tempo real com baixa latência." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+    <script>
+      (function() {
+        if (window.opener && window.location.hash && window.location.hash.includes('access_token=')) {
+          try {
+            window.opener.postMessage({ type: 'DISCORD_TOKEN_HASH', hash: window.location.hash }, '*');
+            window.close();
+          } catch (e) {}
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-[#0a0f0d] text-[#dfe4e0] antialiased selection:bg-[#10b981]/30 selection:text-[#4edea3]" style="background-color: #0a0f0d; color: #dfe4e0; margin: 0; min-height: 100vh;">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

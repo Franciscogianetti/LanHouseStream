@@ -1,0 +1,6 @@
+{
+  "name": "Lan House Stream",
+  "description": "Lan House Stream - Plataforma de transmissão de tela, streaming de alta fidelidade e comunicação em tempo real com baixa latência.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
